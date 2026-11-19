@@ -104,3 +104,18 @@ def test_reinit_on_existing_wal_db(tmp_path):
     fact = core2.get_fact("bot1", "user", "name")
     assert fact is not None
     assert fact["value"] == "Alice"
+
+
+def test_recent_events_isolated_by_agent(core):
+    core.log_event("bot1", "ping", "from bot1", {"n": 1})
+    core.log_event("bot2", "ping", "from bot2", {"n": 2})
+    bot1_events = core.get_recent_events(limit=10, agent_id="bot1")
+    assert len(bot1_events) == 1
+    assert bot1_events[0]["agent_id"] == "bot1"
+    assert bot1_events[0]["summary"] == "from bot1"
+    assert len(core.get_recent_events(limit=10)) == 2
+
+
+def test_recent_events_unknown_agent_returns_empty(core):
+    core.log_event("bot1", "ping", "hello")
+    assert core.get_recent_events(limit=10, agent_id="ghost") == []

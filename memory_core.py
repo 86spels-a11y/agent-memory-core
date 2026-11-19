@@ -141,12 +141,21 @@ class MemoryCore:
             )
         return int(cur.lastrowid)
 
-    def get_recent_events(self, limit: int = 10) -> list[dict]:
+    def get_recent_events(
+        self, limit: int = 10, agent_id: Optional[str] = None
+    ) -> list[dict]:
         conn = self._get_connection()
-        rows = conn.execute(
-            "SELECT * FROM events ORDER BY timestamp DESC, id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        if agent_id is None:
+            rows = conn.execute(
+                "SELECT * FROM events ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM events WHERE agent_id=? "
+                "ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (agent_id, limit),
+            ).fetchall()
         out: list[dict] = []
         for r in rows:
             d = dict(r)
