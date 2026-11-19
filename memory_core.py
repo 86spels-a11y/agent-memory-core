@@ -88,6 +88,23 @@ class MemoryCore:
                 "CREATE INDEX IF NOT EXISTS idx_events_agent_ts "
                 "ON events(agent_id, timestamp DESC)"
             )
+            cols = {
+                r["name"]
+                for r in conn.execute("PRAGMA table_info(events)").fetchall()
+            }
+            if "parent_event_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE events ADD COLUMN parent_event_id INTEGER "
+                    "REFERENCES events(id)"
+                )
+            if "relation" not in cols:
+                conn.execute(
+                    "ALTER TABLE events ADD COLUMN relation TEXT"
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_parent "
+                "ON events(parent_event_id)"
+            )
 
     def add_fact(
         self,
@@ -129,17 +146,54 @@ class MemoryCore:
         event_type: str,
         summary: str,
         context: Optional[dict] = None,
+        caused_by: Optional[int] = None,
+        relation: str = "caused",
     ) -> int:
+        if relation not in ("caused", "enabled", "prevented"):
+            raise ValueError(
+                f"relation must be caused/enabled/prevented, got {relation!r}"
+            )
         conn = self._get_connection()
         ts = datetime.now(timezone.utc).isoformat()
         ctx_json = json.dumps(context) if context is not None else None
+        if caused_by is not None:
+            parent = conn.execute(
+                "SELECT id FROM events WHERE id=?", (caused_by,)
+            ).fetchone()
+            if parent is None:
+                raise ValueError(f"parent event {caused_by} does not exist")
         with conn:
             cur = conn.execute(
-                "INSERT INTO events (agent_id, timestamp, event_type, summary, context) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (agent_id, ts, event_type, summary, ctx_json),
+                "INSERT INTO events "
+                "(agent_id, timestamp, event_type, summary, context, "
+                " parent_event_id, relation) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    agent_id, ts, event_type, summary, ctx_json,
+                    caused_by, relation if caused_by is not None else None,
+                ),
             )
         return int(cur.lastrowid)
+
+    def trace_cause(self, event_id: int) -> list[dict]:
+        conn = self._get_connection()
+        chain: list[dict] = []
+        seen: set[int] = set()
+        current: Optional[int] = event_id
+        while current is not None:
+            if current in seen:
+                break
+            seen.add(current)
+            row = conn.execute(
+                "SELECT * FROM events WHERE id=?", (current,)
+            ).fetchone()
+            if row is None:
+                break
+            d = dict(row)
+            d["context"] = json.loads(d["context"]) if d["context"] else None
+            chain.append(d)
+            current = d.get("parent_event_id")
+        return chain
 
     def get_recent_events(
         self, limit: int = 10, agent_id: Optional[str] = None

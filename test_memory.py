@@ -119,3 +119,37 @@ def test_recent_events_isolated_by_agent(core):
 def test_recent_events_unknown_agent_returns_empty(core):
     core.log_event("bot1", "ping", "hello")
     assert core.get_recent_events(limit=10, agent_id="ghost") == []
+
+
+def test_event_causal_link(core):
+    root = core.log_event("bot1", "decision", "chose SQLite", {"why": "no orm"})
+    child = core.log_event(
+        "bot1", "outcome", "tests passed", caused_by=root, relation="enabled"
+    )
+    events = core.get_recent_events(limit=10, agent_id="bot1")
+    child_row = next(e for e in events if e["id"] == child)
+    assert child_row["parent_event_id"] == root
+    assert child_row["relation"] == "enabled"
+
+
+def test_trace_cause_chain(core):
+    a = core.log_event("bot1", "decision", "A")
+    b = core.log_event("bot1", "decision", "B", caused_by=a)
+    c = core.log_event("bot1", "outcome", "C", caused_by=b)
+    chain = core.trace_cause(c)
+    assert [e["id"] for e in chain] == [c, b, a]
+    assert chain[-1]["parent_event_id"] is None
+
+
+def test_trace_cause_unknown_returns_empty(core):
+    assert core.trace_cause(9999) == []
+
+
+def test_log_event_rejects_bad_relation(core):
+    with pytest.raises(ValueError):
+        core.log_event("bot1", "x", "y", relation="bogus")
+
+
+def test_log_event_rejects_missing_parent(core):
+    with pytest.raises(ValueError):
+        core.log_event("bot1", "x", "y", caused_by=9999)
