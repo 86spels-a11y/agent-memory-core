@@ -65,8 +65,8 @@ def test_concurrent_writers_wal(tmp_path):
     t2 = threading.Thread(target=writer, args=(b, "b"))
     t1.start(); t2.start(); t1.join(); t2.join()
     assert not errs, errs
-    assert a.get_fact("bot", "k", "a49")["value"] == "49"
-    assert a.get_fact("bot", "k", "b49")["value"] == "49"
+    assert a.get_fact("bot", "k", "a49")["value"] == 49
+    assert a.get_fact("bot", "k", "b49")["value"] == 49
 
 
 def test_concurrent_processes_wal(tmp_path):
@@ -85,8 +85,8 @@ def test_concurrent_processes_wal(tmp_path):
     codes = [p.wait(timeout=30) for p in procs]
     assert codes == [0, 0], codes
     m = MemoryCore(db)
-    assert m.get_fact("bot", "k", "a99")["value"] == "99"
-    assert m.get_fact("bot", "k", "b99")["value"] == "99"
+    assert m.get_fact("bot", "k", "a99")["value"] == 99
+    assert m.get_fact("bot", "k", "b99")["value"] == 99
 
 
 def test_wal_is_enabled(tmp_path):
@@ -191,3 +191,51 @@ def test_fact_as_of_unknown_key_returns_none(core):
     assert core.get_fact_as_of(
         "bot1", "user", "ghost", "2030-01-01T00:00:00+00:00"
     ) is None
+
+
+def test_value_type_symmetry_int(core):
+    core.add_fact("bot1", "user", "age", 42)
+    assert core.get_fact("bot1", "user", "age")["value"] == 42
+
+
+def test_value_type_symmetry_str(core):
+    core.add_fact("bot1", "user", "name", "Alice")
+    assert core.get_fact("bot1", "user", "name")["value"] == "Alice"
+
+
+def test_value_type_symmetry_numeric_string(core):
+    # строка "42" должна остаться строкой, а не превратиться в число
+    core.add_fact("bot1", "user", "code", "42")
+    assert core.get_fact("bot1", "user", "code")["value"] == "42"
+
+
+def test_value_type_symmetry_dict(core):
+    payload = {"x": 1, "y": [2, 3]}
+    core.add_fact("bot1", "meta", "cfg", payload)
+    assert core.get_fact("bot1", "meta", "cfg")["value"] == payload
+
+
+def test_value_type_symmetry_history(core):
+    core.add_fact("bot1", "user", "age", 41)
+    core.add_fact("bot1", "user", "age", 42)
+    history = core.get_fact_history("bot1", "user", "age")
+    assert history[0]["value"] == 41
+    assert isinstance(history[0]["value"], int)
+
+
+def test_legacy_plain_string_is_readable(core, tmp_path):
+    # имитируем старую запись без маркера — должна читаться как строка
+    import sqlite3
+    db = str(tmp_path / "legacy.db")
+    m = MemoryCore(db)
+    conn = m._get_connection()
+    now = "2026-01-01T00:00:00+00:00"
+    with conn:
+        conn.execute(
+            "INSERT INTO facts (agent_id, category, key, value, confidence, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("bot1", "user", "old", "legacy-value", 1.0, now, now),
+        )
+    fact = m.get_fact("bot1", "user", "old")
+    assert fact["value"] == "legacy-value"
+    assert isinstance(fact["value"], str)

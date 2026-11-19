@@ -8,6 +8,24 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 
+_VALUE_MARKER = '{"v":'
+
+
+def _encode_value(value: Any) -> str:
+    """Сериализует значение с маркером, чтобы отличить от старых записей."""
+    return json.dumps({"v": value})
+
+
+def _decode_value(raw: str) -> Any:
+    """Обратная совместимость: старые записи (без маркера) — как строка."""
+    if raw.startswith(_VALUE_MARKER):
+        try:
+            return json.loads(raw)["v"]
+        except (ValueError, KeyError):
+            pass
+    return raw
+
+
 class MemoryCore:
     def __init__(self, db_path: str = "memory.db") -> None:
         self.db_path = db_path
@@ -134,8 +152,7 @@ class MemoryCore:
     ) -> bool:
         conn = self._get_connection()
         now = datetime.now(timezone.utc).isoformat()
-        if not isinstance(value, str):
-            value = json.dumps(value)
+        encoded = _encode_value(value)
         with conn:
             existing = conn.execute(
                 "SELECT value, confidence, updated_at FROM facts "
@@ -163,7 +180,7 @@ class MemoryCore:
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
                 """,
-                (agent_id, category, key, value, confidence, now, now),
+                (agent_id, category, key, encoded, confidence, now, now),
             )
         return True
 
@@ -185,14 +202,16 @@ class MemoryCore:
         ).fetchone()
         if row is not None:
             d = dict(row)
-            d["value"] = d["value"]
+            d["value"] = _decode_value(d["value"])
             return d
         current = conn.execute(
             "SELECT * FROM facts WHERE agent_id=? AND category=? AND key=?",
             (agent_id, category, key),
         ).fetchone()
         if current is not None and current["created_at"] <= timestamp:
-            return dict(current)
+            d = dict(current)
+            d["value"] = _decode_value(d["value"])
+            return d
         return None
 
     def get_fact_history(
@@ -205,7 +224,12 @@ class MemoryCore:
             "ORDER BY valid_from ASC",
             (agent_id, category, key),
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["value"] = _decode_value(d["value"])
+            out.append(d)
+        return out
 
     def get_fact(self, agent_id: str, category: str, key: str) -> Optional[dict]:
         conn = self._get_connection()
@@ -213,7 +237,11 @@ class MemoryCore:
             "SELECT * FROM facts WHERE agent_id=? AND category=? AND key=?",
             (agent_id, category, key),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        d = dict(row)
+        d["value"] = _decode_value(d["value"])
+        return d
 
     def log_event(
         self,
