@@ -77,8 +77,23 @@ Covers:
 
 Pre-1.0. API may change. See roadmap below.
 
+## Features
+
+### Facts
+- `add_fact(agent_id, category, key, value)` — UPSERT, archives previous version
+- `get_fact(agent_id, category, key)` — current value
+- `get_fact_as_of(..., timestamp)` — historical value at time T
+- `get_fact_history(...)` — all archived versions
+
+### Events
+- `log_event(agent_id, event_type, summary, context=None, caused_by=None, relation="caused")`
+- `get_recent_events(limit=10, agent_id=None)` — filtered by agent
+- `trace_cause(event_id)` — walks the causal chain upward (cycle-safe)
+- Relations: `caused` / `enabled` / `prevented`
+
 ## Roadmap
 
-- [ ] `get_fact_as_of()` — historical queries ("what did we know at T?")
-- [ ] causal edges (`caused_by`, `trace_cause()`) — decision → outcome links
+- [ ] Type symmetry: `get_fact` currently returns `value` as str even if
+      written as non-str (json-serialized). Either document or `json.loads`.
 - [ ] TTL / `prune()` — controlled forgetting via `confidence`
+- [ ] `export` / `import` — portable snapshots
