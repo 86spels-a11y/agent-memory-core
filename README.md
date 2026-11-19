@@ -97,3 +97,42 @@ Pre-1.0. API may change. See roadmap below.
       written as non-str (json-serialized). Either document or `json.loads`.
 - [ ] TTL / `prune()` — controlled forgetting via `confidence`
 - [ ] `export` / `import` — portable snapshots
+
+## MCP server
+
+`memory_mcp.py` exposes `MemoryCore` as MCP tools for Claude Desktop
+(or any MCP client). Configure in `claude_desktop_config.json`:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "/path/to/.venv/bin/python",
+      "args": ["/path/to/memory_mcp.py"],
+      "env": {"AGENT_MEMORY_DB": "/path/to/agent.db"}
+    }
+  }
+}
+\`\`\`
+
+Tools: `add_fact`, `get_fact`, `get_fact_as_of`, `get_fact_history`,
+`log_event`, `get_recent_events`, `trace_cause`.
+
+### Termux / Android note
+
+`mcp` depends on `pydantic-core`, which has no PyPI wheel for Android.
+Termux's `rust` package is missing `.rlib` files (termux-packages#30426),
+so building from source fails with `crate std required to be in rlib format`.
+
+Workaround — install Rust-based deps from the Termux index first:
+
+\`\`\`bash
+pip install --index-url https://termux-user-repository.github.io/pypi/ "pydantic-core==2.41.5"
+pip install --no-deps "pydantic==2.12.5"
+pip install --no-deps "mcp>=1.28,<2"
+pip install anyio httpx httpx-sse sse-starlette starlette python-dotenv attrs
+pip install --no-deps jsonschema pyjwt python-multipart typing-inspection pydantic-settings uvicorn
+pip install referencing jsonschema-specifications
+\`\`\`
+
+Linux/macOS users don't need any of this — plain \`pip install mcp\` works.
