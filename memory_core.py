@@ -105,6 +105,24 @@ class MemoryCore:
                 "CREATE INDEX IF NOT EXISTS idx_events_parent "
                 "ON events(parent_event_id)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS fact_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    valid_to TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fact_history_lookup "
+                "ON fact_history(agent_id, category, key, valid_to)"
+            )
 
     def add_fact(
         self,
@@ -119,6 +137,23 @@ class MemoryCore:
         if not isinstance(value, str):
             value = json.dumps(value)
         with conn:
+            existing = conn.execute(
+                "SELECT value, confidence, updated_at FROM facts "
+                "WHERE agent_id=? AND category=? AND key=?",
+                (agent_id, category, key),
+            ).fetchone()
+            if existing is not None:
+                conn.execute(
+                    "INSERT INTO fact_history "
+                    "(agent_id, category, key, value, confidence, "
+                    " valid_from, valid_to) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        agent_id, category, key,
+                        existing["value"], existing["confidence"],
+                        existing["updated_at"], now,
+                    ),
+                )
             conn.execute(
                 """
                 INSERT INTO facts (agent_id, category, key, value, confidence, created_at, updated_at)
@@ -131,6 +166,46 @@ class MemoryCore:
                 (agent_id, category, key, value, confidence, now, now),
             )
         return True
+
+    def get_fact_as_of(
+        self, agent_id: str, category: str, key: str, timestamp: str
+    ) -> Optional[dict]:
+        """Возвращает факт, который был актуален в момент timestamp (ISO-8601).
+
+        Сначала ищет в истории (valid_from <= ts < valid_to), затем в
+        текущей таблице facts (если факт создан до ts и не перезаписан).
+        """
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM fact_history "
+            "WHERE agent_id=? AND category=? AND key=? "
+            "  AND valid_from <= ? AND valid_to > ? "
+            "ORDER BY valid_to ASC LIMIT 1",
+            (agent_id, category, key, timestamp, timestamp),
+        ).fetchone()
+        if row is not None:
+            d = dict(row)
+            d["value"] = d["value"]
+            return d
+        current = conn.execute(
+            "SELECT * FROM facts WHERE agent_id=? AND category=? AND key=?",
+            (agent_id, category, key),
+        ).fetchone()
+        if current is not None and current["created_at"] <= timestamp:
+            return dict(current)
+        return None
+
+    def get_fact_history(
+        self, agent_id: str, category: str, key: str
+    ) -> list[dict]:
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM fact_history "
+            "WHERE agent_id=? AND category=? AND key=? "
+            "ORDER BY valid_from ASC",
+            (agent_id, category, key),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_fact(self, agent_id: str, category: str, key: str) -> Optional[dict]:
         conn = self._get_connection()

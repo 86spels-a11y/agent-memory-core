@@ -153,3 +153,41 @@ def test_log_event_rejects_bad_relation(core):
 def test_log_event_rejects_missing_parent(core):
     with pytest.raises(ValueError):
         core.log_event("bot1", "x", "y", caused_by=9999)
+
+
+def test_fact_as_of_returns_historical_value(core):
+    core.add_fact("bot1", "user", "name", "Alice")
+    first = core.get_fact("bot1", "user", "name")
+    t1 = first["updated_at"]
+    core.add_fact("bot1", "user", "name", "Bob")
+    second = core.get_fact("bot1", "user", "name")
+    t2 = second["updated_at"]
+    # в момент t1 (до перезаписи) — Alice
+    old = core.get_fact_as_of("bot1", "user", "name", t1)
+    assert old is not None
+    assert old["value"] == "Alice"
+    # в момент t2 — Bob (текущая таблица)
+    now = core.get_fact_as_of("bot1", "user", "name", t2)
+    assert now is not None
+    assert now["value"] == "Bob"
+
+
+def test_fact_as_of_before_creation_returns_none(core):
+    core.add_fact("bot1", "user", "name", "Alice")
+    assert core.get_fact_as_of(
+        "bot1", "user", "name", "2000-01-01T00:00:00+00:00"
+    ) is None
+
+
+def test_fact_history_records_versions(core):
+    core.add_fact("bot1", "user", "name", "Alice")
+    core.add_fact("bot1", "user", "name", "Bob")
+    core.add_fact("bot1", "user", "name", "Carol")
+    history = core.get_fact_history("bot1", "user", "name")
+    assert [h["value"] for h in history] == ["Alice", "Bob"]
+
+
+def test_fact_as_of_unknown_key_returns_none(core):
+    assert core.get_fact_as_of(
+        "bot1", "user", "ghost", "2030-01-01T00:00:00+00:00"
+    ) is None
